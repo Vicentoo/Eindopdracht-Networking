@@ -1,126 +1,107 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using LibData; // Zorg ervoor dat je Message, MessageType en DNSRecord definieert
+using LibData;
+using System.Collections.Generic;
+using System.IO;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        ServerUDP.start();
+    }
+}
+
+public class Setting
+{
+    public int ServerPortNumber { get; set; }
+    public string? ServerIPAddress { get; set; }
+    public int ClientPortNumber { get; set; }
+    public string? ClientIPAddress { get; set; }
+}
 
 class ServerUDP
 {
-    static UdpClient udpServer;
-    static Dictionary<string, DNSRecord> dnsDatabase = new();
+    static string configFile = "../Setting.json";
+    static string DNSrecordsFile = "DNSrecords.json";
+    static Setting? setting;
+    static List<DNSRecord> dnsRecords;
 
-    static void Main()
+    static void LoadConfiguration()
     {
-        LoadDNSRecords();
-
-        udpServer = new UdpClient(11000);
-        Console.WriteLine("Server gestart op 127.0.0.1:11000");
-
-        while (true)
-        {
-            IPEndPoint clientEndpoint = new IPEndPoint(IPAddress.Any, 0);
-            byte[] requestData = udpServer.Receive(ref clientEndpoint);
-            string requestJson = Encoding.UTF8.GetString(requestData);
-            Message requestMessage = JsonSerializer.Deserialize<Message>(requestJson);
-
-            Console.WriteLine($"Ontvangen {requestMessage.MsgType} van client {clientEndpoint}");
-
-            switch (requestMessage.MsgType)
-            {
-                case MessageType.Hello:
-                    HandleHello(clientEndpoint);
-                    break;
-                case MessageType.DNSLookup:
-                    HandleDNSLookup(clientEndpoint, requestMessage);
-                    break;
-                case MessageType.Ack:
-                    Console.WriteLine($"Ontvangen Ack voor MsgId {requestMessage.Content}");
-                    break;
-                default:
-                    Console.WriteLine("Onbekend berichttype ontvangen.");
-                    break;
-            }
-        }
+        string configContent = File.ReadAllText(configFile);
+        setting = JsonSerializer.Deserialize<Setting>(configContent);
     }
 
     static void LoadDNSRecords()
     {
-        try
-        {
-            string json = File.ReadAllText("dnsrecords.json");
-            List<DNSRecord> records = JsonSerializer.Deserialize<List<DNSRecord>>(json);
-
-            foreach (var record in records)
-            {
-                dnsDatabase[record.Name] = record;
-            }
-
-            Console.WriteLine("DNS-records succesvol geladen.");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Fout bij laden van DNS-records: {ex.Message}");
-        }
+        string recordsContent = File.ReadAllText(DNSrecordsFile);
+        dnsRecords = JsonSerializer.Deserialize<List<DNSRecord>>(recordsContent);
     }
 
-    static void HandleHello(IPEndPoint clientEndpoint)
+    public static void start()
     {
-        Console.WriteLine("Hello bericht ontvangen");
+        LoadConfiguration();
+        LoadDNSRecords();
 
-        Message welcomeMessage = new Message
+        IPEndPoint serverEndPoint = new IPEndPoint(IPAddress.Parse(setting.ServerIPAddress), setting.ServerPortNumber);
+        Socket serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        serverSocket.Bind(serverEndPoint);
+
+        Console.WriteLine("UDP Server is running...");
+
+        while (true)
         {
-            MsgId = 4,
-            MsgType = MessageType.Welcome,
-            Content = "Welkom van de server"
-        };
+            byte[] buffer = new byte[1024];
+            EndPoint clientEndPoint = new IPEndPoint(IPAddress.Any, 0);
+            int receivedBytes = serverSocket.ReceiveFrom(buffer, ref clientEndPoint);
+            string receivedMessage = Encoding.UTF8.GetString(buffer, 0, receivedBytes);
+            string ClientInformation = $"{setting.ClientIPAddress}:{setting.ClientPortNumber}";
 
-        SendMessage(welcomeMessage, clientEndpoint);
-        Console.WriteLine("Verstuurde Welkom naar client");
-    }
+            Message message = JsonSerializer.Deserialize<Message>(receivedMessage);
+            Console.WriteLine($"Received from {ClientInformation}: {receivedMessage}");
 
-    static void HandleDNSLookup(IPEndPoint clientEndpoint, Message requestMessage)
-    {
-        Console.WriteLine($"DNSLookup ontvangen voor {requestMessage.Content}");
-
-        if (requestMessage.Content is JsonElement jsonElement && jsonElement.ValueKind == JsonValueKind.String)
-        {
-            string domain = jsonElement.GetString();
-            if (dnsDatabase.TryGetValue(domain, out DNSRecord record))
+            switch (message.MsgType)
             {
-                Console.WriteLine($"Record gevonden: {record.Type} - {record.Name}");
-
-                Message reply = new Message
-                {
-                    MsgId = requestMessage.MsgId,
-                    MsgType = MessageType.DNSLookupReply,
-                    Content = record
-                };
-
-                SendMessage(reply, clientEndpoint);
-            }
-            else
-            {
-                Console.WriteLine("Domein niet gevonden");
-
-                Message errorReply = new Message
-                {
-                    MsgId = requestMessage.MsgId + 1000, // Uniek ID voor foutberichten
-                    MsgType = MessageType.Error,
-                    Content = "Domein niet gevonden"
-                };
-
-                SendMessage(errorReply, clientEndpoint);
+                case MessageType.Hello:
+                    SendResponse(serverSocket, clientEndPoint, new Message { MsgId = new Random().Next(), MsgType = MessageType.Welcome, Content = "Welcome from server" });
+                    break;
+                case MessageType.DNSLookup:
+                    HandleDNSLookup(serverSocket, clientEndPoint, message);
+                    break;
+                case MessageType.Ack:
+                    Console.WriteLine("Acknowledgment received.");
+                    break;
+                default:
+                    Console.WriteLine("Unknown message type received.");
+                    break;
             }
         }
     }
 
-    static void SendMessage(Message message, IPEndPoint clientEndpoint)
+    static void HandleDNSLookup(Socket serverSocket, EndPoint clientEndPoint, Message message)
     {
-        string responseJson = JsonSerializer.Serialize(message);
-        byte[] responseData = Encoding.UTF8.GetBytes(responseJson);
-        udpServer.Send(responseData, responseData.Length, clientEndpoint);
+        string domainName = message.Content.ToString();
+        DNSRecord record = dnsRecords.Find(r => r.Name == domainName);
+        
+        if (record != null)
+        {
+            SendResponse(serverSocket, clientEndPoint, new Message { MsgId = message.MsgId, MsgType = MessageType.DNSLookupReply, Content = record });
+        }
+        else
+        {
+            SendResponse(serverSocket, clientEndPoint, new Message { MsgId = new Random().Next(), MsgType = MessageType.Error, Content = "Domain not found" });
+        }
+    }
+
+    static void SendResponse(Socket socket, EndPoint clientEndPoint, Message response)
+    {
+        string responseMessage = JsonSerializer.Serialize(response);
+        byte[] responseBytes = Encoding.UTF8.GetBytes(responseMessage);
+        socket.SendTo(responseBytes, clientEndPoint);
+        Console.WriteLine($"Server Sent: {responseMessage}");
     }
 }

@@ -1,15 +1,11 @@
-﻿using System.Collections.Immutable;
-using System.ComponentModel;
+﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
+using System.IO;
 using LibData;
 
-// SendTo();
 class Program
 {
     static void Main(string[] args)
@@ -28,175 +24,78 @@ public class Setting
 
 class ClientUDP
 {
-    static string configFile = @"../Setting.json";
-    static Setting? setting;
-    static UdpClient client;
-    static IPEndPoint serverEndPoint;
+    private static readonly string ConfigFile = "../Setting.json";
+    private static readonly Setting? Setting = JsonSerializer.Deserialize<Setting>(File.ReadAllText(ConfigFile));
 
     public static void Start()
     {
-        LoadConfig();
-        InitializeClient();
-        SendHelloMessage();
-        ReceiveWelcomeMessage();
-        PerformDNSLookups();
-        ReceiveEndMessage();
-    }
-
-
-    //TODO: [Deserialize Setting.json]
-    static void LoadConfig()
-    {
-        try
+        if (Setting == null || string.IsNullOrEmpty(Setting.ServerIPAddress))
         {
-            string configContent = File.ReadAllText(configFile);
-            setting = JsonSerializer.Deserialize<Setting>(configContent);
-
-            if (setting == null)
-            {
-                Console.WriteLine("Failed to load settings.");
-                Environment.Exit(1);
-            }
+            Console.WriteLine("Invalid configuration.");
+            return;
         }
-        catch (Exception ex)
+
+        IPEndPoint serverEndPoint = new IPEndPoint(IPAddress.Parse(Setting.ServerIPAddress), Setting.ServerPortNumber);
+        using Socket clientSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+        SendAndAcknowledge(clientSocket, serverEndPoint, new Message { MsgId = GetUniqueId(), MsgType = MessageType.Hello, Content = "Hello from client" });
+
+        string[] domains = { "www.test.com", "www.third-content.com", "example.com", };
+
+        foreach (var domain in domains)
         {
-            Console.WriteLine($"Error loading config: {ex.Message}");
-            Environment.Exit(1);
+            Message request = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = domain };
+            SendAndAcknowledge(clientSocket, serverEndPoint, request);
         }
+
+        Console.WriteLine("End of DNSLookup received, no further Ack.");
+        clientSocket.Close();
     }
 
-    //TODO: [Create endpoints and socket]
-
-    static void InitializeClient()
+    private static int Ackcount = 0;
+    private static void SendAndAcknowledge(Socket socket, IPEndPoint endPoint, Message message)
     {
-        client = new UdpClient(setting.ClientPortNumber);
-        serverEndPoint = new IPEndPoint(IPAddress.Parse(setting.ServerIPAddress), setting.ServerPortNumber);
+        SendMessage(socket, endPoint, message);
+        Message reply = ReceiveMessage(socket);
+        Console.WriteLine($"Client received: {JsonSerializer.Serialize(reply)}");
 
-        Console.WriteLine($"Client started on {setting.ClientIPAddress}:{setting.ClientPortNumber}");
-        Console.WriteLine($"Connecting to server at {setting.ServerIPAddress}:{setting.ServerPortNumber}");
-    }
-
-
-    //TODO: [Create and send HELLO]
-    static void SendHelloMessage()
-    {
-        Message helloMessage = new Message
+        if (reply == null || reply.Content == null)
         {
-            MsgId = 1,
-            MsgType = MessageType.Hello,
-            Content = "Hello from client"
-        };
-
-        SendMessage(helloMessage);
-        Console.WriteLine("Sent HELLO message.");
-    }
-
-
-    //TODO: [Receive and print Welcome from server]
-    static void ReceiveWelcomeMessage()
-    {
-        Message? responseMessage = ReceiveMessage();
-
-        if (responseMessage != null && responseMessage.MsgType == MessageType.Welcome)
-        {
-            Console.WriteLine("Received WELCOME from server: " + responseMessage.Content);
+            Console.WriteLine("Invalid reply, no ack sent");
+            return;
         }
-        else
+
+        string contentString = reply.Content.ToString();
+
+        if (contentString.Contains("Domain not found", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("Unexpected response from server.");
+            Console.WriteLine($"Invalid Reply, no Ack sent");
+            return;
         }
+
+        Ackcount++;
+        Console.WriteLine($"Client sent ack: {Ackcount}");
     }
 
-
-    // TODO: [Create and send DNSLookup Message]
-    static void PerformDNSLookups()
-    {
-        string[] domainsToLookup = { "google.com", "example.com", "invalid.domain" };
-        int msgId = 2;
-
-        foreach (var domain in domainsToLookup)
-        {
-            SendDNSLookup(domain, msgId++);
-            ReceiveDNSLookupReply();
-        }
-    }
-
-
-    // TODO: [Create and send DNSLookup Message]
-    static void SendDNSLookup(string domain, int msgId)
-    {
-        Message dnsLookupMessage = new Message
-        {
-            MsgId = msgId,
-            MsgType = MessageType.DNSLookup,
-            Content = domain
-        };
-
-        SendMessage(dnsLookupMessage);
-        Console.WriteLine($"Sent DNSLookup for {domain}");
-    }
-
-
-    //TODO: [Receive and print DNSLookupReply from server]
-    static void ReceiveDNSLookupReply()
-    {
-        Message? responseMessage = ReceiveMessage();
-
-        if (responseMessage != null && responseMessage.MsgType == MessageType.DNSLookupReply)
-        {
-            Console.WriteLine($"Received DNSLookupReply: {responseMessage.Content}");
-            SendAcknowledgment(responseMessage.MsgId);
-        }
-        else
-        {
-            Console.WriteLine("Unexpected response for DNSLookup.");
-        }
-    }
-
-
-    //TODO: [Send Acknowledgment to Server]
-    static void SendAcknowledgment(int msgId)
-    {
-        Message ackMessage = new Message
-        {
-            MsgId = msgId,
-            MsgType = MessageType.Ack,
-            Content = "Acknowledged"
-        };
-
-        SendMessage(ackMessage);
-        Console.WriteLine("Sent Acknowledgment.");
-    }
-
-
-    // TODO: [eindbericht]
-    static void ReceiveEndMessage()
-    {
-        Message? responseMessage = ReceiveMessage();
-
-        if (responseMessage != null && responseMessage.MsgType == MessageType.End)
-        {
-            Console.WriteLine("Received END message from server. Closing connection.");
-        }
-    }
-
-
-    static void SendMessage(Message message)
+    private static void SendMessage(Socket socket, IPEndPoint endPoint, Message message)
     {
         string jsonMessage = JsonSerializer.Serialize(message);
-        byte[] messageBytes = Encoding.UTF8.GetBytes(jsonMessage);
-        client.Send(messageBytes, messageBytes.Length, serverEndPoint);
+        Console.WriteLine($"Client sent: {jsonMessage}");
+        byte[] data = Encoding.UTF8.GetBytes(jsonMessage);
+        socket.SendTo(data, endPoint);
     }
 
-    static Message? ReceiveMessage()
+    private static Message ReceiveMessage(Socket socket)
     {
-        IPEndPoint serverResponseEndPoint = new IPEndPoint(IPAddress.Any, 0);
-        byte[] responseBytes = client.Receive(ref serverResponseEndPoint);
-        string responseJson = Encoding.UTF8.GetString(responseBytes);
-
-        return JsonSerializer.Deserialize<Message>(responseJson);
+        byte[] buffer = new byte[1024];
+        EndPoint remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
+        int receivedBytes = socket.ReceiveFrom(buffer, ref remoteEndPoint);
+        string receivedJson = Encoding.UTF8.GetString(buffer, 0, receivedBytes);
+        return JsonSerializer.Deserialize<Message>(receivedJson);
     }
 
-
+    private static int GetUniqueId()
+    {
+        return new Random().Next(0, 100);
+    }
 }
-
