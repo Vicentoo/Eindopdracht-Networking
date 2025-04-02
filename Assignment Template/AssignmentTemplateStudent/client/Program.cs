@@ -40,15 +40,22 @@ class ClientUDP
 
         SendAndAcknowledge(clientSocket, serverEndPoint, new Message { MsgId = GetUniqueId(), MsgType = MessageType.Hello, Content = "Hello from client" });
 
-        string[] domains = { "www.test.com", "www.third-content.com", "example.com", };
+        string[] workingdomains = { "www.test.com", "example.com" };
 
-        foreach (var domain in domains)
+        foreach (var domain in workingdomains)
         {
             Message request = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = domain };
             SendAndAcknowledge(clientSocket, serverEndPoint, request);
         }
 
-        Console.WriteLine("End of DNSLookup received, no further Ack.");
+        string invalidDomainString = "unknown.domain";
+        Message invalidRequest1 = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = invalidDomainString };
+        SendAndAcknowledge(clientSocket, serverEndPoint, invalidRequest1);
+
+        var invalidDomainObject = new { Type = "A", Value = "www.example.com" };
+        Message invalidRequest2 = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = invalidDomainObject };
+        SendAndAcknowledge(clientSocket, serverEndPoint, invalidRequest2);
+
         clientSocket.Close();
     }
 
@@ -65,11 +72,22 @@ class ClientUDP
             return;
         }
 
+        if (reply.MsgType == MessageType.Hello || reply.MsgType == MessageType.Welcome)
+        {
+            return;
+        }
+
         string contentString = reply.Content.ToString();
 
         if (contentString.Contains("Domain not found", StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine($"Invalid Reply, no Ack sent");
+            return;
+        }
+
+        if (reply.MsgType == MessageType.End)
+        {
+            Console.WriteLine("End of DNSLookup'");
             return;
         }
 

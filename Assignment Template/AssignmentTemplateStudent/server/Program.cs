@@ -1,17 +1,15 @@
-﻿using System;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using LibData;
-using System.Collections.Generic;
-using System.IO;
+using System;
 
 class Program
 {
     static void Main(string[] args)
     {
-        ServerUDP.start();
+        ServerUDP.Start();
     }
 }
 
@@ -42,7 +40,7 @@ class ServerUDP
         dnsRecords = JsonSerializer.Deserialize<List<DNSRecord>>(recordsContent);
     }
 
-    public static void start()
+    public static void Start()
     {
         LoadConfiguration();
         LoadDNSRecords();
@@ -64,20 +62,34 @@ class ServerUDP
             Message message = JsonSerializer.Deserialize<Message>(receivedMessage);
             Console.WriteLine($"Received from {ClientInformation}: {receivedMessage}");
 
-            switch (message.MsgType)
+            if (message.MsgType == MessageType.Hello)
             {
-                case MessageType.Hello:
-                    SendResponse(serverSocket, clientEndPoint, new Message { MsgId = new Random().Next(), MsgType = MessageType.Welcome, Content = "Welcome from server" });
-                    break;
-                case MessageType.DNSLookup:
-                    HandleDNSLookup(serverSocket, clientEndPoint, message);
-                    break;
-                case MessageType.Ack:
-                    Console.WriteLine("Acknowledgment received.");
-                    break;
-                default:
-                    Console.WriteLine("Unknown message type received.");
-                    break;
+                SendResponse(serverSocket, clientEndPoint, new Message
+                {
+                    MsgId = new Random().Next(),
+                    MsgType = MessageType.Welcome,
+                    Content = "Welcome from server"
+                });
+            }
+            else if (message.MsgType == MessageType.DNSLookup)
+            {
+                HandleDNSLookup(serverSocket, clientEndPoint, message);
+            }
+            else if (message.MsgType == MessageType.End)
+            {
+                SendResponse(serverSocket, clientEndPoint, new Message 
+                { 
+                    MsgId = new Random().Next(), 
+                    MsgType = MessageType.End, 
+                    Content = "End of DNSLookup" 
+                });
+
+                // After handling all DNS lookups, send the "End" message.
+                Console.WriteLine("End message sent. Waiting for new clients...");
+            }
+            else
+            {
+                Console.WriteLine("Unknown message type received.");
             }
         }
     }
@@ -86,7 +98,7 @@ class ServerUDP
     {
         string domainName = message.Content.ToString();
         DNSRecord record = dnsRecords.Find(r => r.Name == domainName);
-        
+
         if (record != null)
         {
             SendResponse(serverSocket, clientEndPoint, new Message { MsgId = message.MsgId, MsgType = MessageType.DNSLookupReply, Content = record });
