@@ -75,13 +75,6 @@ class ServerUDP
             {
                 HandleDNSLookup(serverSocket, clientEndPoint, message);
             }
-
-            SendResponse(serverSocket, clientEndPoint, new Message
-            {
-                MsgId = new Random().Next(),
-                MsgType = MessageType.End,
-                Content = "End of DNSLookup"
-            });
         }
     }
 

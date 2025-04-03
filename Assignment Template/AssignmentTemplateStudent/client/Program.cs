@@ -56,11 +56,8 @@ class ClientUDP
         Message invalidRequest2 = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = invalidDomainObject };
         SendAndAcknowledge(clientSocket, serverEndPoint, invalidRequest2);
 
-        Message serverReply = ReceiveMessage(clientSocket);
-        if (serverReply.MsgType == MessageType.End)
-        {
-            clientSocket.Close();
-        }
+        clientSocket.Close();
+
     }
 
     private static int Ackcount = 0;
