@@ -56,7 +56,11 @@ class ClientUDP
         Message invalidRequest2 = new Message { MsgId = GetUniqueId(), MsgType = MessageType.DNSLookup, Content = invalidDomainObject };
         SendAndAcknowledge(clientSocket, serverEndPoint, invalidRequest2);
 
-        clientSocket.Close();
+        Message serverReply = ReceiveMessage(clientSocket);
+        if (serverReply.MsgType == MessageType.End)
+        {
+            clientSocket.Close();
+        }
     }
 
     private static int Ackcount = 0;
@@ -82,12 +86,6 @@ class ClientUDP
         if (contentString.Contains("Domain not found", StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine($"Invalid Reply, no Ack sent");
-            return;
-        }
-
-        if (reply.MsgType == MessageType.End)
-        {
-            Console.WriteLine("End of DNSLookup'");
             return;
         }
 

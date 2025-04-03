@@ -75,22 +75,13 @@ class ServerUDP
             {
                 HandleDNSLookup(serverSocket, clientEndPoint, message);
             }
-            else if (message.MsgType == MessageType.End)
-            {
-                SendResponse(serverSocket, clientEndPoint, new Message 
-                { 
-                    MsgId = new Random().Next(), 
-                    MsgType = MessageType.End, 
-                    Content = "End of DNSLookup" 
-                });
 
-                // After handling all DNS lookups, send the "End" message.
-                Console.WriteLine("End message sent. Waiting for new clients...");
-            }
-            else
+            SendResponse(serverSocket, clientEndPoint, new Message
             {
-                Console.WriteLine("Unknown message type received.");
-            }
+                MsgId = new Random().Next(),
+                MsgType = MessageType.End,
+                Content = "End of DNSLookup"
+            });
         }
     }
 
